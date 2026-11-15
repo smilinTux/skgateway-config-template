@@ -22,6 +22,7 @@ status, optional add-ons, troubleshooting). This README is the short path.
   skgateway.yaml       # full gateway config for this instance
   policies.yaml         # authz policies
   secrets.env.enc        # encrypted credentials
+  systemd/               # optional: the units `skcapstone deploy` renders (see below)
 README.md
 ```
 
@@ -89,3 +90,38 @@ deploy/skgateway-deploy --rollback --instance <name> --execute
 
 Restores the previously-installed release and unit. A failed health check
 during a deploy already does this automatically.
+
+## Deploy with `skcapstone deploy` (sk-release)
+
+The SK estate deploys gateways the way it deploys skstacks: the public
+framework at a pinned tag, plus this private repo at a pinned commit. Both
+are named per node in the private `sk-release` manifest, and
+`skcapstone deploy tools` (skcapstone 0.15.410 or later) exports both and
+writes the units. Reference: `docs/DEPLOY.md`, section "Per-cluster config
+repos", in smilinTux/skcapstone.
+
+```yaml
+tools:
+  skgateway: {repo: smilinTux/skgateway, ref: skgateway-v1.1.17, setup: [npm, ci, --omit=dev]}
+nodes:
+  <node>:
+    tools: [skgateway]
+    configs:
+      skgateway: {repo: smilinTux/<this-repo>, ref: <commit sha>, instance: <instance-name>}
+```
+
+- `<instance>/systemd/*.service` and `*.timer` are the whole units. In them,
+  `@TOOL@` becomes `%h/.local/share/sk-tools/skgateway/current` (the
+  framework export) and `@CONFIG@` becomes
+  `%h/.local/share/sk-tools/skgateway-config/current/<instance>`, for
+  example `ExecStart=/usr/bin/node @TOOL@/src/index.mjs --port 18780 --config @CONFIG@/skgateway.yaml`.
+  Any other `@NAME@` refuses the apply.
+- Only `<instance>/` is exported. Hand drop-ins for a rendered unit are moved
+  to `~/.local/state/sk-deploy/displaced-dropins/`, so put every setting in
+  the unit file here.
+- Secrets stay out of git: point `EnvironmentFile=` at a 0600 file on the
+  node (skvault, or decrypted from `secrets.env.enc`).
+- Change a config: PR here, merge, then a manifest PR bumping the node's
+  `configs.skgateway.ref`, then `skcapstone deploy tools` on the node. A
+  smoke failure undoes the switch. Upgrade the framework by bumping
+  `tools.skgateway.ref` in the manifest the same way.
